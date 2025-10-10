@@ -3,30 +3,42 @@
 import { useState, useEffect } from 'react'
 import { 
   Mic, X, TrendingUp, TrendingDown, Sparkles, ChevronDown,
-  ArrowUpRight, ArrowDownRight, Coffee, Car, ShoppingBag,
-  Smartphone, BookOpen, Search, Bell, User, Target,
-  Wallet, PiggyBank
+  Coffee, Car, ShoppingBag, BookOpen, Search, Bell, User, Target,
+  Wallet, PiggyBank, Loader2
 } from 'lucide-react'
 import {
   BarChart, Bar, ResponsiveContainer, XAxis, YAxis, 
   Tooltip, CartesianGrid
 } from 'recharts'
+import { categorizeExpense, getCategoryIcon, getCategoryColor } from '../../lib/gemini'
+
+interface Transaction {
+  name: string
+  time: string
+  amount: number
+  type: 'expense' | 'income'
+  icon: string
+  color: string
+  category: string
+}
 
 export default function DashboardPage() {
   const [isListening, setIsListening] = useState(false)
   const [spokenText, setSpokenText] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [isProcessing, setIsProcessing] = useState(false)
   const [recognition, setRecognition] = useState<any>(null)
   const [selectedPeriod, setSelectedPeriod] = useState('Last month')
 
   // Student-focused stats
-  const stats = {
-    pocketMoney: 8500, // Monthly pocket money
-    totalExpenses: 6240, // Total spent this month
-    savings: 2260, // Money saved
-    budgetUsed: 73, // Percentage of budget used
-    expenseChange: 15, // % increase in expenses
-    savingsChange: -8 // % change in savings
-  }
+  const [stats, setStats] = useState({
+    pocketMoney: 8500,
+    totalExpenses: 6240,
+    savings: 2260,
+    budgetUsed: 73,
+    expenseChange: 15,
+    savingsChange: -8
+  })
 
   // Savings Goal
   const savingsGoal = {
@@ -52,13 +64,13 @@ export default function DashboardPage() {
   }))
 
   // Recent transactions
-  const transactions = [
-    { name: 'Lunch at Dominos', time: 'Today, 1:30 PM', amount: -350, type: 'expense', icon: '🍕', color: 'bg-orange-500' },
-    { name: 'Mom transferred money', time: 'Oct 20, 10:00 AM', amount: 8500, type: 'income', icon: '💰', color: 'bg-emerald-500' },
-    { name: 'Auto to College', time: 'Oct 19, 8:15 AM', amount: -50, type: 'expense', icon: '🚕', color: 'bg-yellow-500' },
-    { name: 'Stationery Shopping', time: 'Oct 18, 5:00 PM', amount: -450, type: 'expense', icon: '📚', color: 'bg-blue-500' },
-    { name: 'Coffee with Friends', time: 'Oct 17, 4:30 PM', amount: -280, type: 'expense', icon: '☕', color: 'bg-amber-500' }
-  ]
+  const [transactions, setTransactions] = useState<Transaction[]>([
+    { name: 'Lunch at Dominos', time: 'Today, 1:30 PM', amount: -350, type: 'expense', icon: '🍕', color: 'bg-orange-500', category: 'food' },
+    { name: 'Mom transferred money', time: 'Oct 20, 10:00 AM', amount: 8500, type: 'income', icon: '💰', color: 'bg-emerald-500', category: 'income' },
+    { name: 'Auto to College', time: 'Oct 19, 8:15 AM', amount: -50, type: 'expense', icon: '🚕', color: 'bg-yellow-500', category: 'transport' },
+    { name: 'Stationery Shopping', time: 'Oct 18, 5:00 PM', amount: -450, type: 'expense', icon: '📚', color: 'bg-blue-500', category: 'books' },
+    { name: 'Coffee with Friends', time: 'Oct 17, 4:30 PM', amount: -280, type: 'expense', icon: '☕', color: 'bg-amber-500', category: 'food' }
+  ])
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -85,16 +97,66 @@ export default function DashboardPage() {
   }, [])
 
   const startListening = () => {
-    if (!recognition) return
+    if (!recognition) {
+      setErrorMessage('Speech recognition not supported in your browser')
+      return
+    }
     setSpokenText('')
+    setErrorMessage('')
     recognition.start()
     setIsListening(true)
   }
 
-  const stopListening = () => {
+  const stopListening = async () => {
     if (!recognition) return
     recognition.stop()
     setIsListening(false)
+    
+    if (spokenText.trim()) {
+      setIsProcessing(true)
+      setErrorMessage('')
+      
+      try {
+        // Use Gemini to categorize the expense
+        const result = await categorizeExpense(spokenText)
+        
+        if (result.success && result.data) {
+          const { amount, category, description } = result.data
+          
+          const newTransaction: Transaction = {
+            name: description,
+            time: new Date().toLocaleString('en-IN', { 
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            }),
+            amount: -amount,
+            type: 'expense',
+            icon: getCategoryIcon(category),
+            color: getCategoryColor(category),
+            category: category
+          }
+          
+          setTransactions(prev => [newTransaction, ...prev])
+          setStats(prev => ({
+            ...prev,
+            totalExpenses: prev.totalExpenses + amount,
+            savings: prev.pocketMoney - (prev.totalExpenses + amount),
+            budgetUsed: Math.round(((prev.totalExpenses + amount) / prev.pocketMoney) * 100)
+          }))
+          
+          setTimeout(() => setSpokenText(''), 2000)
+        } else {
+          setErrorMessage(result.error || 'Failed to process expense. Please try again.')
+        }
+      } catch (error) {
+        console.error('Error processing expense:', error)
+        setErrorMessage('Something went wrong. Please try again.')
+      } finally {
+        setIsProcessing(false)
+      }
+    }
   }
 
   return (
@@ -325,15 +387,24 @@ export default function DashboardPage() {
                 <Sparkles className="w-5 h-5 text-pink-400" />
                 <span>Quick Add Expense</span>
               </h3>
+              
               <button
                 onClick={isListening ? stopListening : startListening}
+                disabled={isProcessing}
                 className={`w-full h-20 rounded-2xl flex items-center justify-center transition-all duration-300 ${
-                  isListening
+                  isProcessing
+                    ? 'bg-gradient-to-r from-gray-600 via-gray-600 to-gray-600 cursor-not-allowed'
+                    : isListening
                     ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 animate-pulse'
                     : 'bg-gradient-to-r from-pink-600/80 via-purple-600/80 to-cyan-600/80 hover:from-pink-600 hover:via-purple-600 hover:to-cyan-600'
                 }`}
               >
-                {isListening ? (
+                {isProcessing ? (
+                  <div className="flex items-center space-x-3">
+                    <Loader2 className="w-6 h-6 text-white animate-spin" />
+                    <span className="text-white font-bold">Processing...</span>
+                  </div>
+                ) : isListening ? (
                   <div className="flex items-center space-x-3">
                     <div className="flex space-x-1">
                       {[...Array(4)].map((_, i) => (
@@ -349,11 +420,19 @@ export default function DashboardPage() {
                   </div>
                 )}
               </button>
+
               {spokenText && (
                 <div className="mt-4 p-3 bg-white/5 rounded-xl">
                   <p className="text-white text-sm">"{spokenText}"</p>
                 </div>
               )}
+
+              {errorMessage && (
+                <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+                  <p className="text-red-400 text-sm">{errorMessage}</p>
+                </div>
+              )}
+
               <p className="text-gray-400 text-xs text-center mt-3">
                 Say: "Spent 200 rupees on lunch" 🎤
               </p>

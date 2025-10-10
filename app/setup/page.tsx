@@ -1,9 +1,18 @@
-"use client"
+'use client';
 
-import { useState } from 'react'
-import { Save, User, Wallet, Target, Settings } from 'lucide-react'
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Save, User, Wallet, Target, Settings, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { auth, db } from '@/lib/firebase';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 
 export default function SetupPage() {
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState(1);
+
   const [formData, setFormData] = useState({
     // Personal Info
     name: '',
@@ -17,7 +26,7 @@ export default function SetupPage() {
     goalItem: '',
     goalAmount: '',
     goalDeadline: '',
-    currentSavings: '',
+    currentSavings: '0',
     
     // Budget Categories
     budgetCategories: {
@@ -32,14 +41,34 @@ export default function SetupPage() {
     // Preferences
     trackingMethod: 'voice',
     reminderFrequency: 'daily'
-  })
+  });
+
+  // Check authentication
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setCurrentUser(user);
+        
+        // Check if setup already completed
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        
+        if (userSnap.exists() && userSnap.data().profile) {
+          // Already completed setup
+          router.push('/dashboard');
+        }
+      } else {
+        // Not logged in, redirect to home
+        router.push('/');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router]);
 
   const updateFormData = (field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }))
-  }
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
 
   const updateBudgetCategory = (category: string, value: string) => {
     setFormData(prev => ({
@@ -48,334 +77,502 @@ export default function SetupPage() {
         ...prev.budgetCategories,
         [category]: value
       }
-    }))
-  }
+    }));
+  };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    // Save to Firebase/database
-    console.log('Form Data:', formData)
-    // Redirect to dashboard
-    window.location.href = '/dashboard'
-  }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!currentUser) {
+      alert('⚠️ Please login first!');
+      return;
+    }
 
-  const totalBudget = Object.values(formData.budgetCategories).reduce((sum, val) => sum + (parseInt(val) || 0), 0)
+    setLoading(true);
+
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+
+      // Prepare data for Firestore
+      const userData = {
+        profile: {
+          name: formData.name,
+          email: currentUser.email,
+          monthlyIncome: Number(formData.monthlyIncome),
+          studentType: formData.studentType,
+          incomeSource: formData.incomeSource,
+          createdAt: serverTimestamp()
+        },
+        budgetCategories: {
+          food: { 
+            budget: Number(formData.budgetCategories.food) || 0, 
+            spent: 0,
+            color: '#F59E0B' 
+          },
+          transport: { 
+            budget: Number(formData.budgetCategories.transport) || 0, 
+            spent: 0,
+            color: '#3B82F6'
+          },
+          shopping: { 
+            budget: Number(formData.budgetCategories.shopping) || 0, 
+            spent: 0,
+            color: '#EC4899'
+          },
+          entertainment: { 
+            budget: Number(formData.budgetCategories.entertainment) || 0, 
+            spent: 0,
+            color: '#8B5CF6'
+          },
+          books: { 
+            budget: Number(formData.budgetCategories.books) || 0, 
+            spent: 0,
+            color: '#10B981'
+          },
+          other: { 
+            budget: Number(formData.budgetCategories.other) || 0, 
+            spent: 0,
+            color: '#6B7280'
+          }
+        },
+        savingsGoal: {
+          item: formData.goalItem,
+          target: Number(formData.goalAmount),
+          saved: Number(formData.currentSavings) || 0,
+          deadline: formData.goalDeadline
+        },
+        preferences: {
+          trackingMethod: formData.trackingMethod,
+          reminderFrequency: formData.reminderFrequency
+        }
+      };
+
+      // Save to Firestore
+      await setDoc(userRef, userData, { merge: true });
+
+      console.log('✅ Setup completed successfully!');
+      
+      // Redirect to dashboard
+      router.push('/dashboard');
+
+    } catch (error) {
+      console.error('❌ Setup error:', error);
+      alert('Failed to save data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const totalBudget = Object.values(formData.budgetCategories).reduce(
+    (sum, val) => sum + (parseInt(val) || 0), 
+    0
+  );
+
+  const nextStep = () => {
+    if (step < 3) setStep(step + 1);
+  };
+
+  const prevStep = () => {
+    if (step > 1) setStep(step - 1);
+  };
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-black pt-20">
-      {/* Animated Background */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute top-40 -left-40 w-96 h-96 bg-pink-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-        <div className="absolute bottom-40 right-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
-      </div>
-
-      <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50 py-12 px-4">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Setup Your Profile</h1>
-          <p className="text-gray-400">Complete your profile to get started with BudgetBee</p>
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">
+            🎯 Complete Your Profile
+          </h1>
+          <p className="text-gray-600">
+            Let's set up your personalized finance dashboard
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-8">
-          
-          {/* Personal Information */}
-          <section className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
-            <div className="flex items-center space-x-2 mb-6">
-              <User className="w-5 h-5 text-purple-400" />
-              <h2 className="text-lg font-semibold text-white">Personal Information</h2>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">
-                  Full Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => updateFormData('name', e.target.value)}
-                  placeholder="Enter your name"
-                  required
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">
-                  Student Type <span className="text-red-500">*</span>
-                </label>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { value: 'school', label: 'School' },
-                    { value: 'undergraduate', label: 'Undergraduate' },
-                    { value: 'postgraduate', label: 'Postgraduate' }
-                  ].map((type) => (
-                    <button
-                      key={type.value}
-                      type="button"
-                      onClick={() => updateFormData('studentType', type.value)}
-                      className={`py-2.5 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
-                        formData.studentType === type.value
-                          ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white'
-                          : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                      }`}
-                    >
-                      {type.label}
-                    </button>
-                  ))}
+        {/* Progress Steps */}
+        <div className="mb-8">
+          <div className="flex justify-between items-center max-w-2xl mx-auto">
+            {[1, 2, 3].map((s) => (
+              <div key={s} className="flex-1 flex items-center">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all ${
+                  step >= s 
+                    ? 'bg-purple-600 text-white' 
+                    : 'bg-gray-200 text-gray-400'
+                }`}>
+                  {step > s ? <CheckCircle2 size={20} /> : s}
                 </div>
+                {s < 3 && (
+                  <div className={`h-1 flex-1 mx-2 rounded transition-all ${
+                    step > s ? 'bg-purple-600' : 'bg-gray-200'
+                  }`} />
+                )}
               </div>
-            </div>
-          </section>
+            ))}
+          </div>
+          <div className="flex justify-between max-w-2xl mx-auto mt-2 text-sm text-gray-600">
+            <span>Personal</span>
+            <span>Budget</span>
+            <span>Goals</span>
+          </div>
+        </div>
 
-          {/* Financial Information */}
-          <section className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
-            <div className="flex items-center space-x-2 mb-6">
-              <Wallet className="w-5 h-5 text-cyan-400" />
-              <h2 className="text-lg font-semibold text-white">Financial Information</h2>
-            </div>
+        {/* Form */}
+        <form onSubmit={handleSubmit}>
+          <div className="bg-white rounded-2xl shadow-xl p-8 mb-6">
             
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">
-                  Monthly Pocket Money <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">₹</span>
+            {/* STEP 1: Personal & Financial Info */}
+            {step === 1 && (
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <User className="text-purple-600" size={24} />
+                  <h2 className="text-2xl font-bold text-gray-900">Personal & Financial Info</h2>
+                </div>
+
+                {/* Name */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Your Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.name}
+                    onChange={(e) => updateFormData('name', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+                    placeholder="John Doe"
+                  />
+                </div>
+
+                {/* Student Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Student Type
+                  </label>
+                  <select
+                    value={formData.studentType}
+                    onChange={(e) => updateFormData('studentType', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="undergraduate">Undergraduate</option>
+                    <option value="postgraduate">Postgraduate</option>
+                    <option value="phd">PhD</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                {/* Monthly Income */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Monthly Pocket Money (₹) *
+                  </label>
                   <input
                     type="number"
+                    required
                     value={formData.monthlyIncome}
                     onChange={(e) => updateFormData('monthlyIncome', e.target.value)}
-                    placeholder="5000"
-                    required
-                    className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition-colors"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    placeholder="8500"
                   />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">
-                  Income Source <span className="text-red-500">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { value: 'parents', label: 'Parents/Family' },
-                    { value: 'scholarship', label: 'Scholarship' },
-                    { value: 'parttime', label: 'Part-time Job' },
-                    { value: 'allowance', label: 'Other' }
-                  ].map((source) => (
-                    <button
-                      key={source.value}
-                      type="button"
-                      onClick={() => updateFormData('incomeSource', source.value)}
-                      className={`py-2.5 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
-                        formData.incomeSource === source.value
-                          ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white'
-                          : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                      }`}
-                    >
-                      {source.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Savings Goal */}
-          <section className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
-            <div className="flex items-center space-x-2 mb-6">
-              <Target className="w-5 h-5 text-pink-400" />
-              <h2 className="text-lg font-semibold text-white">Savings Goal</h2>
-              <span className="text-xs text-gray-500">(Optional)</span>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">What are you saving for?</label>
-                <input
-                  type="text"
-                  value={formData.goalItem}
-                  onChange={(e) => updateFormData('goalItem', e.target.value)}
-                  placeholder="e.g., New Laptop, iPhone, Gaming Console"
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition-colors"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Income Source */}
                 <div>
-                  <label className="block text-sm text-gray-300 mb-2">Target Amount</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">₹</span>
-                    <input
-                      type="number"
-                      value={formData.goalAmount}
-                      onChange={(e) => updateFormData('goalAmount', e.target.value)}
-                      placeholder="75000"
-                      className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition-colors"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-300 mb-2">Already Saved</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">₹</span>
-                    <input
-                      type="number"
-                      value={formData.currentSavings}
-                      onChange={(e) => updateFormData('currentSavings', e.target.value)}
-                      placeholder="10000"
-                      className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition-colors"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-300 mb-2">Target Date</label>
-                  <input
-                    type="date"
-                    value={formData.goalDeadline}
-                    onChange={(e) => updateFormData('goalDeadline', e.target.value)}
-                    className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition-colors"
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Budget Categories */}
-          <section className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center space-x-2">
-                <Wallet className="w-5 h-5 text-purple-400" />
-                <h2 className="text-lg font-semibold text-white">Monthly Budget</h2>
-                <span className="text-xs text-gray-500">(Optional)</span>
-              </div>
-              <div className="text-sm">
-                <span className="text-gray-400">Total: </span>
-                <span className="text-white font-semibold">₹{totalBudget}</span>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                { key: 'food', label: 'Food & Dining' },
-                { key: 'transport', label: 'Transport' },
-                { key: 'shopping', label: 'Shopping & Clothes' },
-                { key: 'entertainment', label: 'Entertainment' },
-                { key: 'books', label: 'Books & Study' },
-                { key: 'other', label: 'Others' }
-              ].map((category) => (
-                <div key={category.key}>
-                  <label className="block text-sm text-gray-300 mb-2">{category.label}</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">₹</span>
-                    <input
-                      type="number"
-                      value={formData.budgetCategories[category.key as keyof typeof formData.budgetCategories]}
-                      onChange={(e) => updateBudgetCategory(category.key, e.target.value)}
-                      placeholder="1000"
-                      className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition-colors"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {formData.monthlyIncome && totalBudget > 0 && (
-              <div className="mt-4 p-3 bg-white/5 rounded-xl border border-white/10">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Remaining Budget:</span>
-                  <span className={`font-semibold ${
-                    parseInt(formData.monthlyIncome) - totalBudget >= 0 ? 'text-emerald-400' : 'text-red-400'
-                  }`}>
-                    ₹{(parseInt(formData.monthlyIncome) - totalBudget).toLocaleString()}
-                  </span>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Income Source
+                  </label>
+                  <select
+                    value={formData.incomeSource}
+                    onChange={(e) => updateFormData('incomeSource', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="parents">Parents/Family</option>
+                    <option value="scholarship">Scholarship</option>
+                    <option value="part-time">Part-time Job</option>
+                    <option value="freelance">Freelancing</option>
+                    <option value="mixed">Mixed Sources</option>
+                  </select>
                 </div>
               </div>
             )}
-          </section>
 
-          {/* Preferences */}
-          <section className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
-            <div className="flex items-center space-x-2 mb-6">
-              <Settings className="w-5 h-5 text-cyan-400" />
-              <h2 className="text-lg font-semibold text-white">Preferences</h2>
-            </div>
+            {/* STEP 2: Budget Categories */}
+            {step === 2 && (
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <Wallet className="text-purple-600" size={24} />
+                  <h2 className="text-2xl font-bold text-gray-900">Budget Categories</h2>
+                </div>
+
+                <p className="text-gray-600 mb-4">
+                  Allocate your monthly budget across different categories
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Food */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      🍔 Food & Dining
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.budgetCategories.food}
+                      onChange={(e) => updateBudgetCategory('food', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      placeholder="3000"
+                    />
+                  </div>
+
+                  {/* Transport */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      🚗 Transport
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.budgetCategories.transport}
+                      onChange={(e) => updateBudgetCategory('transport', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      placeholder="1500"
+                    />
+                  </div>
+
+                  {/* Shopping */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      🛍️ Shopping
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.budgetCategories.shopping}
+                      onChange={(e) => updateBudgetCategory('shopping', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      placeholder="2000"
+                    />
+                  </div>
+
+                  {/* Entertainment */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      🎮 Entertainment
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.budgetCategories.entertainment}
+                      onChange={(e) => updateBudgetCategory('entertainment', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      placeholder="1000"
+                    />
+                  </div>
+
+                  {/* Books */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      📚 Books & Study
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.budgetCategories.books}
+                      onChange={(e) => updateBudgetCategory('books', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      placeholder="800"
+                    />
+                  </div>
+
+                  {/* Other */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      💡 Other Expenses
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.budgetCategories.other}
+                      onChange={(e) => updateBudgetCategory('other', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      placeholder="500"
+                    />
+                  </div>
+                </div>
+
+                {/* Budget Summary */}
+                <div className="mt-6 p-4 bg-purple-50 rounded-lg">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-gray-700">Total Budget:</span>
+                    <span className="text-2xl font-bold text-purple-600">
+                      ₹{totalBudget.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                  {formData.monthlyIncome && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      Remaining: ₹{(Number(formData.monthlyIncome) - totalBudget).toLocaleString('en-IN')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* STEP 3: Savings Goal & Preferences */}
+            {step === 3 && (
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <Target className="text-purple-600" size={24} />
+                  <h2 className="text-2xl font-bold text-gray-900">Savings Goal</h2>
+                </div>
+
+                {/* Goal Item */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    What are you saving for? *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.goalItem}
+                    onChange={(e) => updateFormData('goalItem', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    placeholder="Laptop, Trip, Emergency Fund..."
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Goal Amount */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Target Amount (₹) *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      value={formData.goalAmount}
+                      onChange={(e) => updateFormData('goalAmount', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      placeholder="75000"
+                    />
+                  </div>
+
+                  {/* Deadline */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Target Date
+                    </label>
+                    <input
+                      type="date"
+                      value={formData.goalDeadline}
+                      onChange={(e) => updateFormData('goalDeadline', e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Current Savings */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Current Savings (₹)
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.currentSavings}
+                    onChange={(e) => updateFormData('currentSavings', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    placeholder="0"
+                  />
+                </div>
+
+                {/* Preferences */}
+                <div className="pt-6 border-t">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Settings className="text-purple-600" size={20} />
+                    <h3 className="text-lg font-semibold text-gray-900">Preferences</h3>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Tracking Method */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Preferred Tracking Method
+                      </label>
+                      <select
+                        value={formData.trackingMethod}
+                        onChange={(e) => updateFormData('trackingMethod', e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      >
+                        <option value="voice">🎤 Voice Commands</option>
+                        <option value="manual">⌨️ Manual Entry</option>
+                        <option value="both">🔄 Both</option>
+                      </select>
+                    </div>
+
+                    {/* Reminder Frequency */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Budget Reminder Frequency
+                      </label>
+                      <select
+                        value={formData.reminderFrequency}
+                        onChange={(e) => updateFormData('reminderFrequency', e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      >
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="never">Never</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Navigation Buttons */}
+          <div className="flex justify-between gap-4">
+            {step > 1 && (
+              <button
+                type="button"
+                onClick={prevStep}
+                className="px-6 py-3 border-2 border-purple-600 text-purple-600 rounded-lg font-semibold hover:bg-purple-50 transition-all"
+              >
+                ← Previous
+              </button>
+            )}
             
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">Expense Tracking Method</label>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { value: 'voice', label: 'Voice' },
-                    { value: 'manual', label: 'Manual' },
-                    { value: 'both', label: 'Both' }
-                  ].map((method) => (
-                    <button
-                      key={method.value}
-                      type="button"
-                      onClick={() => updateFormData('trackingMethod', method.value)}
-                      className={`py-2.5 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
-                        formData.trackingMethod === method.value
-                          ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white'
-                          : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                      }`}
-                    >
-                      {method.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">Spending Reminders</label>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { value: 'daily', label: 'Daily' },
-                    { value: 'weekly', label: 'Weekly' },
-                    { value: 'never', label: 'Never' }
-                  ].map((freq) => (
-                    <button
-                      key={freq.value}
-                      type="button"
-                      onClick={() => updateFormData('reminderFrequency', freq.value)}
-                      className={`py-2.5 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
-                        formData.reminderFrequency === freq.value
-                          ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white'
-                          : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                      }`}
-                    >
-                      {freq.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Submit Button */}
-          <div className="flex items-center justify-between pt-4">
-            <button
-              type="button"
-              onClick={() => window.location.href = '/'}
-              className="px-6 py-3 text-gray-400 hover:text-white transition-colors"
-            >
-              Skip for now
-            </button>
-            <button
-              type="submit"
-              className="px-8 py-3 bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white rounded-xl font-semibold hover:scale-105 transition-all duration-200 flex items-center space-x-2"
-            >
-              <Save className="w-5 h-5" />
-              <span>Save & Continue</span>
-            </button>
+            {step < 3 ? (
+              <button
+                type="button"
+                onClick={nextStep}
+                className="ml-auto px-6 py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-all flex items-center gap-2"
+              >
+                Next <ArrowRight size={20} />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={loading}
+                className="ml-auto px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg font-semibold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save size={20} />
+                    Complete Setup
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </form>
       </div>
     </div>
-  )
+  );
 }

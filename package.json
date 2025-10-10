@@ -9,13 +9,14 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@heroicons/react": "^2.2.0",
     "chart.js": "^4.5.0",
     "chroma-js": "^3.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "firebase": "^12.3.0",
+    "firebase": "^12.4.0",
     "framer-motion": "^12.23.22",
     "lodash": "^4.17.21",
     "lucide-react": "^0.544.0",

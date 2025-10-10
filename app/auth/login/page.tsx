@@ -1,378 +1,376 @@
-'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { auth, googleProvider } from '@/lib/firebase'
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { auth, db } from '@/lib/firebase';
 import { 
-  signInWithPopup, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword 
-} from 'firebase/auth'
-import { FcGoogle } from 'react-icons/fc'
-import { Mail, Lock, User, Eye, EyeOff, ArrowLeft, Brain, Shield, Mic, CheckCircle, AlertCircle } from 'lucide-react'
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  setPersistence,
+  browserLocalPersistence,
+  onAuthStateChanged
+} from 'firebase/auth';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { Eye, EyeOff, Mail, Lock, User, ArrowRight, CheckCircle2 } from 'lucide-react';
 
 export default function AuthPage() {
-  const router = useRouter()
-  const [isLogin, setIsLogin] = useState(true)
-  const [showPassword, setShowPassword] = useState(false)
+  const router = useRouter();
+  
+  const [isLogin, setIsLogin] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
     confirmPassword: ''
-  })
-  const [errors, setErrors] = useState({})
-  const [isLoading, setIsLoading] = useState(false)
-  const [authError, setAuthError] = useState('')
+  });
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }))
-    if (errors[name]) {
-      setErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }))
-    }
-    setAuthError('')
-  }
+  const [error, setError] = useState('');
 
-  const validateForm = () => {
-    const newErrors = {}
+  // Check if user is already logged in
+  useEffect(() => {
+    // Enable persistent login
+    setPersistence(auth, browserLocalPersistence);
 
-    if (!isLogin && !formData.name.trim()) {
-      newErrors.name = 'Name is required'
-    }
-
-    if (!formData.email.trim()) {
-      newErrors.email = 'Email is required'
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email is invalid'
-    }
-
-    if (!formData.password) {
-      newErrors.password = 'Password is required'
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters'
-    }
-
-    if (!isLogin && formData.password !== formData.confirmPassword) {
-      newErrors.confirmPassword = 'Passwords do not match'
-    }
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const handleEmailAuth = async (e) => {
-    e.preventDefault()
-    
-    if (!validateForm()) return
-
-    setIsLoading(true)
-    setAuthError('')
-
-    try {
-      if (isLogin) {
-        await signInWithEmailAndPassword(auth, formData.email, formData.password)
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        console.log('✅ User already logged in:', user.email);
+        
+        // Check if setup is complete
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        
+        if (userSnap.exists() && userSnap.data().budgetCategories) {
+          router.push('/dashboard');
+        } else {
+          router.push('/setup');
+        }
       } else {
-        await createUserWithEmailAndPassword(auth, formData.email, formData.password)
+        setCheckingAuth(false);
       }
-      router.push('/') // ← CHANGED: Redirect to home page
-    } catch (error) {
-      console.error('Auth error:', error)
-      setAuthError(error.message || 'Authentication failed. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }
+    });
 
-  const handleGoogleSignIn = async () => {
-    setIsLoading(true)
-    setAuthError('')
-    
+    return () => unsubscribe();
+  }, [router]);
+
+  // Handle Signup
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    // Validation
+    if (!formData.name.trim()) {
+      setError('Please enter your name');
+      setLoading(false);
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      setError('Password must be at least 6 characters');
+      setLoading(false);
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      setError('Passwords do not match');
+      setLoading(false);
+      return;
+    }
+
     try {
-      await signInWithPopup(auth, googleProvider)
-      router.push('/') // ← CHANGED: Redirect to home page
-    } catch (error) {
-      console.error('Google sign-in error:', error)
-      setAuthError(error.message || 'Google sign-in failed. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }
+      // Create Firebase Auth account
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
 
-  const toggleMode = () => {
-    setIsLogin(!isLogin)
-    setFormData({
-      name: '',
-      email: '',
-      password: '',
-      confirmPassword: ''
-    })
-    setErrors({})
-    setAuthError('')
+      const user = userCredential.user;
+      console.log('✅ Account created:', user.uid);
+
+      // Create initial user document in Firestore
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        profile: {
+          name: formData.name,
+          email: user.email,
+          createdAt: serverTimestamp()
+        },
+        onboardingComplete: false
+      });
+
+      console.log('✅ User document created');
+      router.push('/setup');
+
+    } catch (error: any) {
+      console.error('❌ Signup error:', error);
+      
+      if (error.code === 'auth/email-already-in-use') {
+        setError('This email is already registered. Please login.');
+      } else if (error.code === 'auth/invalid-email') {
+        setError('Invalid email address');
+      } else if (error.code === 'auth/weak-password') {
+        setError('Password is too weak');
+      } else {
+        setError('Signup failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Login
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
+
+      const user = userCredential.user;
+      console.log('✅ Login successful:', user.uid);
+
+      // Check setup status
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userRef);
+
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        
+        if (!userData.budgetCategories || !userData.profile?.monthlyIncome) {
+          router.push('/setup');
+        } else {
+          router.push('/dashboard');
+        }
+      } else {
+        router.push('/setup');
+      }
+
+    } catch (error: any) {
+      console.error('❌ Login error:', error);
+      
+      if (error.code === 'auth/user-not-found') {
+        setError('No account found with this email');
+      } else if (error.code === 'auth/wrong-password') {
+        setError('Incorrect password');
+      } else if (error.code === 'auth/invalid-email') {
+        setError('Invalid email address');
+      } else if (error.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Try again later.');
+      } else {
+        setError('Login failed. Check your credentials.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-purple-800 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-white mx-auto mb-4"></div>
+          <p className="text-white text-lg">Checking authentication...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 flex items-center justify-center px-4 py-8">
-      {/* Background Elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-20 w-32 h-32 bg-emerald-400/10 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-32 right-20 w-48 h-48 bg-blue-400/10 rounded-full blur-3xl"></div>
-        <div className="absolute top-1/2 left-1/3 w-24 h-24 bg-purple-400/10 rounded-full blur-2xl"></div>
-      </div>
-
-      <div className="relative w-full max-w-md">
-        {/* Back Button */}
-        <Link 
-          href="/" 
-          className="inline-flex items-center gap-2 text-white/70 hover:text-white transition-colors mb-8 group"
-        >
-          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
-          Back to Home
-        </Link>
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-purple-800 flex items-center justify-center p-4">
+      <div className="max-w-md w-full">
+        
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-bold text-white mb-2">🐝 BudgetBee</h1>
+          <p className="text-purple-100">Smart Finance Tracking</p>
+        </div>
 
         {/* Auth Card */}
-        <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-3xl p-8 shadow-2xl">
+        <div className="bg-white rounded-2xl shadow-2xl p-8">
           
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-blue-600 rounded-xl flex items-center justify-center">
-                <Brain className="w-6 h-6 text-white" />
-              </div>
-              <h1 className="text-2xl font-bold text-white">BudgetBee</h1>
-            </div>
-            
-            <h2 className="text-3xl font-bold text-white mb-2">
-              {isLogin ? 'Welcome Back!' : 'Join BudgetBee'}
-            </h2>
-            <p className="text-white/70">
-              {isLogin 
-                ? 'Sign in to your voice-powered finance assistant' 
-                : 'Start your journey to smarter money management'}
-            </p>
+          {/* Toggle Tabs */}
+          <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => {
+                setIsLogin(true);
+                setError('');
+              }}
+              className={`flex-1 py-2 rounded-md font-semibold transition-all ${
+                isLogin ? 'bg-white text-purple-600 shadow' : 'text-gray-600'
+              }`}
+            >
+              Login
+            </button>
+            <button
+              onClick={() => {
+                setIsLogin(false);
+                setError('');
+              }}
+              className={`flex-1 py-2 rounded-md font-semibold transition-all ${
+                !isLogin ? 'bg-white text-purple-600 shadow' : 'text-gray-600'
+              }`}
+            >
+              Sign Up
+            </button>
           </div>
 
-          {/* Global Error Message */}
-          {authError && (
-            <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-              <p className="text-red-300 text-sm">{authError}</p>
+          {/* Error Message */}
+          {error && (
+            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
+              {error}
             </div>
           )}
 
-          {/* Google Sign In Button */}
-          <button
-            onClick={handleGoogleSignIn}
-            disabled={isLoading}
-            className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-50 text-gray-800 py-3 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:transform-none mb-6 shadow-lg"
-          >
-            <FcGoogle className="w-6 h-6" />
-            Continue with Google
-          </button>
-
-          {/* Divider */}
-          <div className="relative mb-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/20"></div>
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-transparent text-white/70">Or continue with email</span>
-            </div>
-          </div>
-
-          {/* Email/Password Form */}
-          <form onSubmit={handleEmailAuth} className="space-y-5">
+          {/* Form */}
+          <form onSubmit={isLogin ? handleLogin : handleSignup} className="space-y-4">
             
-            {/* Name Field (Signup only) */}
+            {/* Name (Signup Only) */}
             {!isLogin && (
               <div>
-                <label className="block text-white/90 text-sm font-medium mb-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
                   Full Name
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/50" />
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                   <input
                     type="text"
-                    name="name"
+                    required
                     value={formData.name}
-                    onChange={handleInputChange}
-                    className={`w-full pl-12 pr-4 py-3 bg-white/10 border ${
-                      errors.name ? 'border-red-400' : 'border-white/20'
-                    } rounded-xl text-white placeholder-white/50 focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 transition-all duration-300`}
-                    placeholder="Enter your full name"
+                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="John Doe"
                   />
                 </div>
-                {errors.name && (
-                  <div className="flex items-center gap-2 mt-2 text-red-400 text-sm">
-                    <AlertCircle className="w-4 h-4" />
-                    {errors.name}
-                  </div>
-                )}
               </div>
             )}
 
-            {/* Email Field */}
+            {/* Email */}
             <div>
-              <label className="block text-white/90 text-sm font-medium mb-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Email Address
               </label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/50" />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                 <input
                   type="email"
-                  name="email"
+                  required
                   value={formData.email}
-                  onChange={handleInputChange}
-                  className={`w-full pl-12 pr-4 py-3 bg-white/10 border ${
-                    errors.email ? 'border-red-400' : 'border-white/20'
-                  } rounded-xl text-white placeholder-white/50 focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 transition-all duration-300`}
-                  placeholder="Enter your email"
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="you@example.com"
                 />
               </div>
-              {errors.email && (
-                <div className="flex items-center gap-2 mt-2 text-red-400 text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {errors.email}
-                </div>
-              )}
             </div>
 
-            {/* Password Field */}
+            {/* Password */}
             <div>
-              <label className="block text-white/90 text-sm font-medium mb-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Password
               </label>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/50" />
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  name="password"
+                  required
                   value={formData.password}
-                  onChange={handleInputChange}
-                  className={`w-full pl-12 pr-12 py-3 bg-white/10 border ${
-                    errors.password ? 'border-red-400' : 'border-white/20'
-                  } rounded-xl text-white placeholder-white/50 focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 transition-all duration-300`}
-                  placeholder="Enter your password"
+                  onChange={(e) => setFormData({...formData, password: e.target.value})}
+                  className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="••••••••"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-white/50 hover:text-white transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                 >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                 </button>
               </div>
-              {errors.password && (
-                <div className="flex items-center gap-2 mt-2 text-red-400 text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {errors.password}
-                </div>
+              {!isLogin && (
+                <p className="text-xs text-gray-500 mt-1">Minimum 6 characters</p>
               )}
             </div>
 
-            {/* Confirm Password Field (Signup only) */}
+            {/* Confirm Password (Signup Only) */}
             {!isLogin && (
               <div>
-                <label className="block text-white/90 text-sm font-medium mb-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
                   Confirm Password
                 </label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/50" />
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                   <input
                     type={showPassword ? 'text' : 'password'}
-                    name="confirmPassword"
+                    required
                     value={formData.confirmPassword}
-                    onChange={handleInputChange}
-                    className={`w-full pl-12 pr-4 py-3 bg-white/10 border ${
-                      errors.confirmPassword ? 'border-red-400' : 'border-white/20'
-                    } rounded-xl text-white placeholder-white/50 focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 transition-all duration-300`}
-                    placeholder="Confirm your password"
+                    onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="••••••••"
                   />
                 </div>
-                {errors.confirmPassword && (
-                  <div className="flex items-center gap-2 mt-2 text-red-400 text-sm">
-                    <AlertCircle className="w-4 h-4" />
-                    {errors.confirmPassword}
-                  </div>
-                )}
               </div>
             )}
 
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={isLoading}
-              className="w-full bg-gradient-to-r from-emerald-600 to-blue-600 text-white py-3 rounded-xl font-semibold text-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:transform-none flex items-center justify-center gap-3"
+              disabled={loading}
+              className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg font-semibold hover:from-purple-700 hover:to-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              {isLoading ? (
+              {loading ? (
                 <>
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                  {isLogin ? 'Signing In...' : 'Creating Account...'}
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  {isLogin ? 'Logging in...' : 'Creating account...'}
                 </>
               ) : (
                 <>
-                  <CheckCircle className="w-5 h-5" />
-                  {isLogin ? 'Sign In' : 'Create Account'}
+                  {isLogin ? 'Login' : 'Create Account'}
+                  <ArrowRight size={20} />
                 </>
               )}
             </button>
-
           </form>
 
-          {/* Features Preview */}
-          <div className="mt-8 p-4 bg-white/5 rounded-2xl border border-white/10">
-            <h3 className="text-white font-semibold mb-3 text-center">What you'll get:</h3>
-            <div className="grid grid-cols-1 gap-3">
-              <div className="flex items-center gap-3 text-white/80 text-sm">
-                <Mic className="w-4 h-4 text-emerald-400" />
-                <span>Voice-powered expense tracking</span>
-              </div>
-              <div className="flex items-center gap-3 text-white/80 text-sm">
-                <Brain className="w-4 h-4 text-blue-400" />
-                <span>AI-powered financial insights</span>
-              </div>
-              <div className="flex items-center gap-3 text-white/80 text-sm">
-                <Shield className="w-4 h-4 text-purple-400" />
-                <span>Secure & private data</span>
-              </div>
-            </div>
+          {/* Footer */}
+          <div className="mt-6 text-center text-sm text-gray-600">
+            {isLogin ? (
+              <p>
+                New to BudgetBee?{' '}
+                <button
+                  onClick={() => setIsLogin(false)}
+                  className="text-purple-600 font-semibold hover:underline"
+                >
+                  Create an account
+                </button>
+              </p>
+            ) : (
+              <p>
+                Already have an account?{' '}
+                <button
+                  onClick={() => setIsLogin(true)}
+                  className="text-purple-600 font-semibold hover:underline"
+                >
+                  Login
+                </button>
+              </p>
+            )}
           </div>
-
-          {/* Toggle Login/Signup */}
-          <div className="mt-8 text-center">
-            <p className="text-white/70">
-              {isLogin ? "Don't have an account?" : "Already have an account?"}
-              <button
-                onClick={toggleMode}
-                className="ml-2 text-emerald-400 hover:text-emerald-300 font-semibold transition-colors"
-              >
-                {isLogin ? 'Sign Up' : 'Sign In'}
-              </button>
-            </p>
-          </div>
-
         </div>
 
-        {/* Footer */}
-        <div className="mt-8 text-center">
-          <p className="text-white/50 text-sm">
-            By continuing, you agree to BudgetBee's{' '}
-            <Link href="#" className="text-emerald-400 hover:text-emerald-300 transition-colors">
-              Terms of Service
-            </Link>{' '}
-            and{' '}
-            <Link href="#" className="text-emerald-400 hover:text-emerald-300 transition-colors">
-              Privacy Policy
-            </Link>
-          </p>
-        </div>
+        {/* Security Note */}
+        <p className="text-center text-white text-xs mt-6 opacity-75">
+          🔒 Data encrypted and securely stored with Firebase
+        </p>
       </div>
     </div>
-  )
+  );
 }
